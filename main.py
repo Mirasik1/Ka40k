@@ -202,7 +202,7 @@ def handle_photo(message):
             total_products = data["total_products"]
             products = data["products"]
             text_blocks = []
-            markup = types.InlineKeyboardMarkup()
+
 
             for idx in range(1, total_products + 1):
                 product_key = f"product_{idx}"
@@ -237,13 +237,9 @@ def handle_photo(message):
                     f"  • Калории: {prod['total']['calories']} ккал\n"
                 )
                 text_blocks.append(block)
-                markup.add(
-                    types.InlineKeyboardButton(f"✏️ Изменить вес блюда {idx}", callback_data=f"change_weight:{idx}"))
-
-            markup.add(types.InlineKeyboardButton("✅ Оставить все как есть", callback_data="keep_all"))
 
             full_text = "\n\n".join(text_blocks)
-            bot.send_message(message.chat.id, full_text, reply_markup=markup)
+            bot.send_message(message.chat.id, full_text)
             db.increment_photo_usage(message.from_user.id)
             db.save_record(message.from_user.id, data)
             user_data[message.chat.id] = {"data": data, "change_idx": None}
