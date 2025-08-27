@@ -240,7 +240,7 @@ def handle_photo(message):
 
             full_text = "\n\n".join(text_blocks)
             bot.send_message(message.chat.id, full_text)
-            db.increment_photo_usage(message.from_user.id)
+
             db.save_record(message.from_user.id, data)
             user_data[message.chat.id] = {"data": data, "change_idx": None}
         except Exception as e:
@@ -250,110 +250,12 @@ def handle_photo(message):
         bot.reply_to(message, f"❌ Ошибка: {e}")
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("change_weight") or call.data == "keep_all")
-def handle_weight_buttons(call):
-    user_entry = user_data.get(call.message.chat.id)
-    if not user_entry:
-        bot.answer_callback_query(call.id, "⚠️ Сначала отправьте фото продукта.")
-        return
-    data = user_entry["data"]
-    if call.data == "keep_all":
-        bot.answer_callback_query(call.id, "✅ Все веса оставлены без изменений.")
-        return
-
-    _, idx = call.data.split(":")
-    idx = int(idx)
-
-    product_key = f"product_{idx}"
-    prod = data["products"][product_key]
-
-    bot.set_state(call.from_user.id, AllStates.change_weight, call.message.chat.id)
-    bot.send_message(
-        call.message.chat.id,
-        f"Введите новый вес для блюда {idx} ({prod['name']}) (целое число в граммах).\n"
-        f"Допустимый диапазон: {int(0.5*prod['weight'])} г – {int(2*prod['weight'])} г"
-    )
-    user_entry["change_idx"] = idx
-
-
-@bot.message_handler(state=AllStates.change_weight)
-def change_weight(message):
-    user_entry = user_data.get(message.chat.id)
-    if not user_entry:
-        bot.send_message(message.chat.id, "⚠️ Сначала отправьте фото продукта.")
-        return
-
-    data = user_entry["data"]
-    idx = user_entry.get("change_idx")
-    if not idx:
-        bot.send_message(message.chat.id, "❌ Ошибка: не найден продукт для изменения.")
-        return
-
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "❌ Введите только целое число без точек и запятых.")
-        return
-
-    product_key = f"product_{idx}"
-    prod = data["products"][product_key]
-
-    new_weight = int(message.text)
-    min_w = int(0.5 * prod["weight"])
-    max_w = int(2 * prod["weight"])
-
-    if not (min_w <= new_weight <= max_w):
-        bot.send_message(message.chat.id, f"❌ Вес должен быть в диапазоне {min_w} – {max_w} г.")
-        return
-
-    prod["weight"] = new_weight
-    protein = float(prod["per_100g"]["protein"])
-    fat = float(prod["per_100g"]["fat"])
-    carbs = float(prod["per_100g"]["carbs"])
-    calories_100g = protein * 4 + fat * 9 + carbs * 4
-
-    prod["total"] = {
-        "protein": round(protein * new_weight / 100, 1),
-        "fat": round(fat * new_weight / 100, 1),
-        "carbs": round(carbs * new_weight / 100, 1),
-        "calories": round(calories_100g * new_weight / 100, 1),
-    }
-    db.update_record_json(user_entry["record_id"], data)
-
-    prod["total"] = {
-        "protein": round(protein * new_weight / 100, 1),
-        "fat": round(fat * new_weight / 100, 1),
-        "carbs": round(carbs * new_weight / 100, 1),
-        "calories": round(calories_100g * new_weight / 100, 1),
-    }
-
-    text = (
-        f"📦 Новый вес блюда {idx}: {new_weight} г\n\n"
-        f"⚖ На 100 г:\n"
-        f"  • Белки: {protein} г\n"
-        f"  • Жиры: {fat} г\n"
-        f"  • Углеводы: {carbs} г\n"
-        f"  • Калории: {prod['per_100g']['calories']} ккал\n\n"
-        f"🔥 Итог:\n"
-        f"  • Белки: {prod['total']['protein']} г\n"
-        f"  • Жиры: {prod['total']['fat']} г\n"
-        f"  • Углеводы: {prod['total']['carbs']} г\n"
-        f"  • Калории: {prod['total']['calories']} ккал"
-    )
-
-    bot.send_message(message.chat.id, text)
-
-    bot.delete_state(message.from_user.id, message.chat.id)
-    user_entry["change_idx"] = None
-
-
-
-
 @bot.message_handler(commands=['kbju'])
 def send_kbju(message):
     telegram_id = message.from_user.id
     conn = sqlite3.connect("data.db")
     cursor = conn.cursor()
 
-    # Проверяем есть ли уже запись в recommended_kbju
     cursor.execute("""
         SELECT recommended_calories, recommended_protein, recommended_fat, recommended_carbs
         FROM recommended_kbju
@@ -397,7 +299,6 @@ def send_kbju(message):
 
     conn.close()
 
-    # Отправляем сообщение пользователю
     bot.send_message(
         message.chat.id,
         f"🥗 Ваши рекомендованные КБЖУ:\n"
@@ -406,6 +307,8 @@ def send_kbju(message):
         f"Жиры: {kbju[2]} г\n"
         f"Углеводы: {kbju[3]} г"
     )
+
+
 @bot.message_handler(commands=["menu"])
 def show_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -456,13 +359,12 @@ def handle_menu(message):
             f"Углеводы: {round(stats['eaten']['Carbs'], 1)} / {round(stats['recommended']['Carbs'], 1)} г"
         )
 
-        # --- Получаем диаграмму ---
+
         img_buf = db.plot_today_stats(message.from_user.id)
         if img_buf:
             bot.send_photo(message.chat.id, img_buf, caption=caption)
 
         else:
-            # Если диаграммы нет, просто отправляем текст
             bot.send_message(message.chat.id, caption)
 
     else:
